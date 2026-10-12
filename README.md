@@ -32,6 +32,7 @@ When you snap a photo with an iPhone, edit a video in Premiere, or generate artw
 - **Video Cleaning:** Lossless container stream-copying (`-map 0 -c copy -map_metadata -1`) or visually lossless re-encoding (`H.264/AAC` or `VP9/Opus`).
 
 ### 3. Ephemeral Batch Processing & ZIP Export
+- Dedicated, streamlined clean workspace set as the default route (`/`).
 - Drag-and-drop batch upload supporting **JPG, PNG, WebP, HEIC, MP4, MOV, and WebM**.
 - Process individually or batch clean the entire queue.
 - One-click **ZIP Archive export** (`cleanpost_batch_*.zip`).
