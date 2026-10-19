@@ -2,7 +2,6 @@
 
 import React from 'react';
 import {
-  FileText,
   FileImage,
   Film,
   Eye,
@@ -14,7 +13,6 @@ import {
   Loader2,
   Sliders,
   Archive,
-  RefreshCw,
   ShieldCheck,
   ShieldAlert,
 } from 'lucide-react';
@@ -37,7 +35,7 @@ export interface QueueItem {
 
 interface FileQueueProps {
   items: QueueItem[];
-  options: CleaningOptions;
+  options?: CleaningOptions;
   onInspect: (item: QueueItem) => void;
   onCleanSingle: (id: string) => void;
   onRemove: (id: string) => void;
@@ -51,7 +49,6 @@ interface FileQueueProps {
 
 export function FileQueue({
   items,
-  options,
   onInspect,
   onCleanSingle,
   onRemove,

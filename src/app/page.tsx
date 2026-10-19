@@ -6,7 +6,8 @@ import { FileQueue, QueueItem } from '@/components/FileQueue';
 import { MetadataDrawer } from '@/components/MetadataDrawer';
 import { CleaningOptionsModal } from '@/components/CleaningOptionsModal';
 import { CleaningOptions } from '@/types/metadata';
-import { ShieldCheck, Sliders, CheckCircle2 } from 'lucide-react';
+import Link from 'next/link';
+import { ShieldCheck, Sliders, CheckCircle2, Sparkles } from 'lucide-react';
 
 export default function CleanPostApp() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -254,13 +255,20 @@ export default function CleanPostApp() {
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
+          <Link
+            href="/compress"
+            className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs flex items-center gap-1.5 transition-colors"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            Image Compressor
+          </Link>
           <button
             type="button"
             onClick={() => setIsOptionsModalOpen(true)}
             className="px-3.5 py-2 rounded-xl text-xs font-medium border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#121215] text-zinc-700 dark:text-zinc-300 hover:border-zinc-300 dark:hover:border-zinc-700 shadow-xs flex items-center gap-1.5 transition-colors"
           >
-            <Sliders className="w-3.5 h-3.5" />
+            <Sliders className="w-3.5 h-3.5 text-zinc-500" />
             Cleaning Rules
           </button>
         </div>
@@ -311,6 +319,7 @@ export default function CleanPostApp() {
         onClose={() => setSelectedItemForInspect(null)}
         metadata={selectedItemForInspect?.metadata || null}
         afterMetadata={selectedItemForInspect?.cleanResult?.afterMetadata || null}
+        report={selectedItemForInspect?.cleanResult?.report || null}
       />
 
       {/* Options Preferences Modal */}

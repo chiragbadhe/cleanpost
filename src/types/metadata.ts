@@ -98,28 +98,51 @@ export interface FileMetadataSummary {
   };
   rawTagCount: number;
   rawTags: Record<string, unknown>;
+  inspectionErrors?: string[];
 }
 
-export const CleaningOptionsSchema = z.object({
-  removeExif: z.boolean().default(true),
-  removeGps: z.boolean().default(true),
-  removeTimestamps: z.boolean().default(true),
-  removeSoftware: z.boolean().default(true),
-  removeXmpIptc: z.boolean().default(true),
-  removeThumbnails: z.boolean().default(true),
-  stripC2pa: z.boolean().default(true),
-  stripAiPrompts: z.boolean().default(true),
-  reencode: z.boolean().default(false),
-  targetFormat: z.enum(['original', 'jpeg', 'png', 'webp', 'mp4']).default('original'),
-  quality: z.number().min(50).max(100).default(90),
-});
+export const CleaningOptionsSchema = z
+  .object({
+    removeExif: z.boolean().default(true),
+    removeGps: z.boolean().default(true),
+    removeTimestamps: z.boolean().default(true),
+    removeSoftware: z.boolean().default(true),
+    removeXmpIptc: z.boolean().default(true),
+    removeThumbnails: z.boolean().default(true),
+    stripC2pa: z.boolean().default(true),
+    stripAiPrompts: z.boolean().default(true),
+    reencode: z.boolean().default(false),
+    targetFormat: z.enum(['original', 'jpeg', 'png', 'webp', 'mp4']).default('original'),
+    quality: z.number().int().min(50).max(100).default(90),
+  })
+  .strict();
 
 export type CleaningOptions = z.infer<typeof CleaningOptionsSchema>;
 
+export type CategoryCleaningStatus =
+  | 'removed'
+  | 'retained'
+  | 'not_present'
+  | 'not_verified'
+  | 'unsupported';
+
+export interface CategoryAuditResult {
+  category: string;
+  label: string;
+  status: CategoryCleaningStatus;
+  beforeEvidence?: string;
+  afterEvidence?: string;
+  details?: string;
+}
+
 export interface CleaningReport {
+  overallStatus: 'verified_clean' | 'partially_clean' | 'retained_requested' | 'unverified';
+  categories: Record<string, CategoryAuditResult>;
   categoriesRemoved: string[];
   categoriesRetained: string[];
+  notPresent: string[];
   notVerifiable: string[];
+  disclaimer: string;
   aiRemovalNotice?: string;
   c2paNotice?: string;
 }

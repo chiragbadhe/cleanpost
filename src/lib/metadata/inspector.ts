@@ -1,5 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { exiftool, Tags } from 'exiftool-vendored';
 import {
   FileMetadataSummary,
@@ -9,8 +11,13 @@ import {
   SoftwareInfo,
   C2paInfo,
   AiIndicatorInfo,
+  CleaningOptions,
+  CleaningReport,
+  CategoryAuditResult,
 } from '@/types/metadata';
 import { detectFileType } from '@/lib/security';
+
+const execFileAsync = promisify(execFile);
 
 export function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -21,8 +28,8 @@ export function formatBytes(bytes: number): string {
 }
 
 /**
- * Direct buffer scanner for C2PA JUMBF boxes and embedded AI prompts
- * This complements ExifTool for formats where metadata chunks might not be registered as standard EXIF tags.
+ * Direct buffer scanner for C2PA JUMBF boxes and embedded AI prompts.
+ * Operates safely over binary buffers without shell execution.
  */
 export function scanBufferForAiAndC2pa(buffer: Buffer): {
   c2paDetected: boolean;
@@ -43,10 +50,16 @@ export function scanBufferForAiAndC2pa(buffer: Buffer): {
   let promptFound: string | undefined;
   let digitalSourceType: string | undefined;
 
+  // Scan up to 5MB of header/container space
+  const scanLimit = Math.min(buffer.length, 5 * 1024 * 1024);
+  const binaryString = buffer.toString('latin1', 0, scanLimit);
+
   // 1. Scan for C2PA JUMBF signatures in binary
-  const binaryString = buffer.toString('latin1', 0, Math.min(buffer.length, 5 * 1024 * 1024)); // scan first 5MB
-  
-  if (binaryString.includes('c2pa') || binaryString.includes('c2pa.manifest') || binaryString.includes('c2pa.claim')) {
+  if (
+    binaryString.includes('c2pa') ||
+    binaryString.includes('c2pa.manifest') ||
+    binaryString.includes('c2pa.claim')
+  ) {
     c2paDetected = true;
     c2paDetails.push('C2PA Content Credentials manifest structure found in media stream.');
   }
@@ -56,19 +69,28 @@ export function scanBufferForAiAndC2pa(buffer: Buffer): {
   }
 
   // 2. Scan for Generative AI markers in text chunks
-  // A1111 / ComfyUI / Stable Diffusion
-  if (binaryString.includes('parameters') && binaryString.includes('Steps:') && binaryString.includes('Sampler:')) {
+  if (
+    binaryString.includes('parameters') &&
+    binaryString.includes('Steps:') &&
+    binaryString.includes('Sampler:')
+  ) {
     aiDetected = true;
     aiConfidence = 'confirmed';
     toolIdentified = 'Stable Diffusion (Automatic1111 / WebUI)';
-    aiReasons.push('Stable Diffusion generation parameters embedded in PNG metadata (Steps, Sampler, CFG scale, Seed).');
+    aiReasons.push(
+      'Stable Diffusion generation parameters embedded in PNG metadata (Steps, Sampler, CFG scale, Seed).'
+    );
 
     const paramIdx = binaryString.indexOf('parameters');
     if (paramIdx !== -1) {
       const snippet = binaryString.slice(paramIdx + 10, paramIdx + 260).replace(/[\0\r\n]/g, ' ');
       promptFound = snippet.trim();
     }
-  } else if (binaryString.includes('prompt') && binaryString.includes('workflow') && binaryString.includes('class_type')) {
+  } else if (
+    binaryString.includes('prompt') &&
+    binaryString.includes('workflow') &&
+    binaryString.includes('class_type')
+  ) {
     aiDetected = true;
     aiConfidence = 'confirmed';
     toolIdentified = 'ComfyUI';
@@ -90,7 +112,11 @@ export function scanBufferForAiAndC2pa(buffer: Buffer): {
   }
 
   // DALL-E / OpenAI markers
-  if (binaryString.includes('dall-e') || binaryString.includes('DALL·E') || binaryString.includes('OpenAI')) {
+  if (
+    binaryString.includes('dall-e') ||
+    binaryString.includes('DALL·E') ||
+    binaryString.includes('OpenAI')
+  ) {
     aiDetected = true;
     aiConfidence = aiConfidence === 'none' ? 'likely' : aiConfidence;
     toolIdentified = toolIdentified || 'OpenAI DALL-E';
@@ -98,7 +124,10 @@ export function scanBufferForAiAndC2pa(buffer: Buffer): {
   }
 
   // Adobe Firefly / Content Credentials digitalSourceType
-  if (binaryString.includes('trainedAlgorithmicMedia') || binaryString.includes('compositeWithTrainedAlgorithmicMedia')) {
+  if (
+    binaryString.includes('trainedAlgorithmicMedia') ||
+    binaryString.includes('compositeWithTrainedAlgorithmicMedia')
+  ) {
     aiDetected = true;
     aiConfidence = 'confirmed';
     digitalSourceType = binaryString.includes('compositeWithTrainedAlgorithmicMedia')
@@ -126,7 +155,13 @@ export function scanBufferForAiAndC2pa(buffer: Buffer): {
   };
 }
 
-export async function inspectFileMetadata(filePath: string, originalFileName?: string): Promise<FileMetadataSummary> {
+/**
+ * Inspects a file's metadata independently using ExifTool, binary scanning, and ffprobe (for video).
+ */
+export async function inspectFileMetadata(
+  filePath: string,
+  originalFileName?: string
+): Promise<FileMetadataSummary> {
   const fileName = originalFileName || path.basename(filePath);
   const stats = await fs.stat(filePath);
   const fileSize = stats.size;
@@ -134,19 +169,25 @@ export async function inspectFileMetadata(filePath: string, originalFileName?: s
 
   // Read header buffer for magic bytes and direct scanner
   const fileHandle = await fs.open(filePath, 'r');
-  const bufferHeader = Buffer.alloc(Math.min(fileSize, 2 * 1024 * 1024)); // first 2MB
+  const bufferHeader = Buffer.alloc(Math.min(fileSize, 2 * 1024 * 1024));
   await fileHandle.read(bufferHeader, 0, bufferHeader.length, 0);
   await fileHandle.close();
 
   const typeInfo = detectFileType(bufferHeader, fileName);
   const bufferScan = scanBufferForAiAndC2pa(bufferHeader);
 
+  const inspectionErrors: string[] = [];
   let rawTags: Tags = {};
+
   try {
     rawTags = await exiftool.read(filePath);
-  } catch (err) {
-    console.warn(`Exiftool read failed on ${filePath}, using fallback scanner:`, err);
+  } catch (err: unknown) {
+    const errorMsg = (err as Error)?.message || 'ExifTool inspection failed';
+    inspectionErrors.push(errorMsg);
+    console.warn(`Exiftool read failed on ${filePath}:`, errorMsg);
   }
+
+  const tagsRecord = rawTags as Record<string, unknown>;
 
   // Extract GPS
   const gps: GpsCoordinates = {};
@@ -171,8 +212,6 @@ export async function inspectFileMetadata(filePath: string, originalFileName?: s
   if (rawTags.GPSDateTime !== undefined) {
     gps.timestamp = String(rawTags.GPSDateTime);
   }
-
-  const tagsRecord = rawTags as Record<string, unknown>;
 
   // Extract Device
   const device: DeviceInfo = {};
@@ -213,9 +252,26 @@ export async function inspectFileMetadata(filePath: string, originalFileName?: s
     if (val === undefined || val === null) continue;
     if (key.startsWith('XMP-') || key.includes('xmp') || key.includes('XMP')) {
       xmp[key] = val;
-    } else if (key.startsWith('IPTC') || ['Credit', 'By-line', 'Caption-Abstract', 'Keywords', 'Source', 'ObjectName'].includes(key)) {
+    } else if (
+      key.startsWith('IPTC') ||
+      ['Credit', 'By-line', 'Caption-Abstract', 'Keywords', 'Source', 'ObjectName'].includes(key)
+    ) {
       iptc[key] = val;
-    } else if (['ISO', 'FNumber', 'ExposureTime', 'FocalLength', 'Flash', 'WhiteBalance', 'ExposureProgram', 'MeteringMode'].includes(key)) {
+    } else if (
+      [
+        'ISO',
+        'FNumber',
+        'ExposureTime',
+        'FocalLength',
+        'Flash',
+        'WhiteBalance',
+        'ExposureProgram',
+        'MeteringMode',
+        'Make',
+        'Model',
+        'Orientation',
+      ].includes(key)
+    ) {
       exif[key] = val;
     }
   }
@@ -242,7 +298,6 @@ export async function inspectFileMetadata(filePath: string, originalFileName?: s
     digitalSourceType: bufferScan.digitalSourceType,
   };
 
-  // Additional ExifTool AI checks
   const digitalSource = tagsRecord['DigitalSourceType'] || tagsRecord['XMP:DigitalSourceType'];
   if (digitalSource) {
     aiIndicators.detected = true;
@@ -260,21 +315,21 @@ export async function inspectFileMetadata(filePath: string, originalFileName?: s
   }
 
   aiIndicators.cannotRemoveNotice =
-    'Note: Cleaning will strip embedded metadata, prompt text, and C2PA credentials. However, it cannot guarantee complete AI-undetectability if the image contains invisible model watermarks (e.g., Google SynthID latent features) or if social media platforms perform server-side visual fingerprinting.';
+    'Note: CleanPost strips metadata, prompts, and C2PA credentials. It does not establish whether an image was originally generated by an AI model or bypass latent watermarks.';
 
   // Check thumbnails
   const hasThumbnails = Boolean(
     rawTags.ThumbnailImage ||
-    rawTags.PreviewImage ||
-    rawTags.JpgFromRaw ||
-    rawTags.OtherImage ||
-    tagsRecord.CoverArt
+      rawTags.PreviewImage ||
+      rawTags.JpgFromRaw ||
+      rawTags.OtherImage ||
+      tagsRecord.CoverArt
   );
 
   // Flags
   const hasGps = Boolean(gps.latitude !== undefined && gps.longitude !== undefined);
   const hasDeviceDetails = Boolean(device.make || device.model || device.serialNumber || device.lensModel);
-  const hasTimestamps = Boolean(timestamps.dateTimeOriginal || timestamps.createDate);
+  const hasTimestamps = Boolean(timestamps.dateTimeOriginal || timestamps.createDate || timestamps.trackCreateDate);
   const hasSoftware = Boolean(software.software || software.creatorTool || software.historySoftwareAgent);
   const hasXmp = Object.keys(xmp).length > 0;
   const hasIptc = Object.keys(iptc).length > 0;
@@ -298,21 +353,53 @@ export async function inspectFileMetadata(filePath: string, originalFileName?: s
   }
   if (hasTimestamps && privacyRiskScore === 'low') {
     privacyRiskScore = 'medium';
-    riskReasons.push(`Original creation timestamp recorded (${timestamps.dateTimeOriginal || timestamps.createDate}).`);
+    riskReasons.push(`Original creation timestamp recorded.`);
   }
   if (aiIndicators.detected) {
     if (privacyRiskScore === 'low') privacyRiskScore = 'medium';
     riskReasons.push(`AI provenance / generation marker detected (${aiIndicators.toolIdentified || 'AI Tool'}).`);
   }
   if (hasThumbnails) {
-    riskReasons.push('Embedded original thumbnail found (may leak uncropped or unedited photo data).');
+    riskReasons.push('Embedded original thumbnail found.');
   }
 
   // Dimensions
-  const width = typeof rawTags.ImageWidth === 'number' ? rawTags.ImageWidth : undefined;
-  const height = typeof rawTags.ImageHeight === 'number' ? rawTags.ImageHeight : undefined;
-  const duration = typeof rawTags.Duration === 'number' ? rawTags.Duration : undefined;
+  let width = typeof rawTags.ImageWidth === 'number' ? rawTags.ImageWidth : undefined;
+  let height = typeof rawTags.ImageHeight === 'number' ? rawTags.ImageHeight : undefined;
+  let duration = typeof rawTags.Duration === 'number' ? rawTags.Duration : undefined;
   const frameRate = typeof rawTags.VideoFrameRate === 'number' ? rawTags.VideoFrameRate : undefined;
+
+  // If video and dimensions not extracted by ExifTool, probe via ffprobe safely
+  if (typeInfo.isVideo && (!width || !height || !duration)) {
+    try {
+      const { stdout } = await execFileAsync(
+        'ffprobe',
+        [
+          '-v',
+          'error',
+          '-show_entries',
+          'format=duration,size:stream=width,height,duration',
+          '-of',
+          'json',
+          filePath,
+        ],
+        { timeout: 10000 }
+      );
+      const probeJson = JSON.parse(stdout);
+      if (probeJson.streams && probeJson.streams.length > 0) {
+        const vStream = probeJson.streams.find((s: Record<string, unknown>) => s.width !== undefined);
+        if (vStream) {
+          width = width || Number(vStream.width);
+          height = height || Number(vStream.height);
+        }
+      }
+      if (probeJson.format && probeJson.format.duration) {
+        duration = duration || parseFloat(probeJson.format.duration);
+      }
+    } catch {
+      // Non-fatal ffprobe fallback failure
+    }
+  }
 
   return {
     fileName,
@@ -350,6 +437,218 @@ export async function inspectFileMetadata(filePath: string, originalFileName?: s
       aiIndicators,
     },
     rawTagCount: Object.keys(rawTags).length,
-    rawTags: rawTags as Record<string, unknown>,
+    rawTags: tagsRecord,
+    inspectionErrors: inspectionErrors.length > 0 ? inspectionErrors : undefined,
+  };
+}
+
+/**
+ * Generates a truthful, category-by-category audit report.
+ * Strictly verifies before-and-after evidence.
+ * Does NOT report 'removed' unless the category was present originally AND verified absent after.
+ */
+export function generateCleaningReport(
+  before: FileMetadataSummary,
+  after: FileMetadataSummary,
+  options: CleaningOptions
+): CleaningReport {
+  const categories: Record<string, CategoryAuditResult> = {};
+  const categoriesRemoved: string[] = [];
+  const categoriesRetained: string[] = [];
+  const notPresent: string[] = [];
+  const notVerifiable: string[] = [];
+
+  const inspectionFailed = Boolean(after.inspectionErrors && after.inspectionErrors.length > 0);
+
+  // Helper evaluator
+  const evaluateCategory = (
+    key: string,
+    label: string,
+    wasPresent: boolean,
+    isPresentAfter: boolean,
+    userOptionRemove: boolean,
+    beforeEvidenceText?: string,
+    afterEvidenceText?: string
+  ) => {
+    if (inspectionFailed) {
+      categories[key] = {
+        category: key,
+        label,
+        status: 'not_verified',
+        details: 'Verification could not be independently completed due to inspection tool error.',
+      };
+      notVerifiable.push(label);
+      return;
+    }
+
+    if (!wasPresent) {
+      categories[key] = {
+        category: key,
+        label,
+        status: 'not_present',
+        details: 'Not present in original file.',
+      };
+      notPresent.push(label);
+      return;
+    }
+
+    // Was present originally
+    if (!isPresentAfter) {
+      categories[key] = {
+        category: key,
+        label,
+        status: 'removed',
+        beforeEvidence: beforeEvidenceText,
+        details: 'Successfully verified as stripped from output file.',
+      };
+      categoriesRemoved.push(label);
+    } else {
+      categories[key] = {
+        category: key,
+        label,
+        status: 'retained',
+        beforeEvidence: beforeEvidenceText,
+        afterEvidence: afterEvidenceText,
+        details: userOptionRemove
+          ? 'Retained: metadata tag survived cleaning operation.'
+          : 'Retained per user configuration choice.',
+      };
+      categoriesRetained.push(label);
+    }
+  };
+
+  // 1. GPS
+  evaluateCategory(
+    'gps',
+    'GPS & Location Coordinates',
+    before.hasGps,
+    after.hasGps,
+    options.removeGps,
+    before.categories.gps.latitude !== undefined
+      ? `Latitude: ${before.categories.gps.latitude}, Longitude: ${before.categories.gps.longitude}`
+      : undefined,
+    after.categories.gps.latitude !== undefined
+      ? `Latitude: ${after.categories.gps.latitude}, Longitude: ${after.categories.gps.longitude}`
+      : undefined
+  );
+
+  // 2. Camera & Hardware
+  evaluateCategory(
+    'device',
+    'Camera & Device Details',
+    before.hasDeviceDetails,
+    after.hasDeviceDetails,
+    options.removeExif,
+    before.categories.device.make
+      ? `${before.categories.device.make} ${before.categories.device.model || ''}`
+      : undefined,
+    after.categories.device.make
+      ? `${after.categories.device.make} ${after.categories.device.model || ''}`
+      : undefined
+  );
+
+  // 3. Timestamps
+  evaluateCategory(
+    'timestamps',
+    'Timestamps & Date Created',
+    before.hasTimestamps,
+    after.hasTimestamps,
+    options.removeTimestamps,
+    before.categories.timestamps.dateTimeOriginal || before.categories.timestamps.createDate,
+    after.categories.timestamps.dateTimeOriginal || after.categories.timestamps.createDate
+  );
+
+  // 4. Editing Software
+  evaluateCategory(
+    'software',
+    'Editing Software Identifiers',
+    before.hasSoftware,
+    after.hasSoftware,
+    options.removeSoftware,
+    before.categories.software.software || before.categories.software.creatorTool,
+    after.categories.software.software || after.categories.software.creatorTool
+  );
+
+  // 5. EXIF Metadata
+  evaluateCategory(
+    'exif',
+    'EXIF Camera Settings',
+    before.hasExif,
+    after.hasExif,
+    options.removeExif,
+    `Original tag count: ${Object.keys(before.categories.exif).length}`,
+    `Remaining tag count: ${Object.keys(after.categories.exif).length}`
+  );
+
+  // 6. XMP & IPTC
+  const beforeXmpIptc = before.hasXmp || before.hasIptc;
+  const afterXmpIptc = after.hasXmp || after.hasIptc;
+  evaluateCategory(
+    'xmp_iptc',
+    'XMP & IPTC Metadata Tags',
+    beforeXmpIptc,
+    afterXmpIptc,
+    options.removeXmpIptc,
+    `XMP/IPTC tags detected: ${Object.keys(before.categories.xmp).length + Object.keys(before.categories.iptc).length}`,
+    `Remaining XMP/IPTC tags: ${Object.keys(after.categories.xmp).length + Object.keys(after.categories.iptc).length}`
+  );
+
+  // 7. Embedded Thumbnails
+  evaluateCategory(
+    'thumbnails',
+    'Embedded Mini Thumbnails',
+    before.hasThumbnails,
+    after.hasThumbnails,
+    options.removeThumbnails,
+    'Embedded preview thumbnail found in container'
+  );
+
+  // 8. C2PA Content Credentials
+  evaluateCategory(
+    'c2pa',
+    'C2PA Content Credentials Manifests',
+    before.hasC2pa,
+    after.hasC2pa,
+    options.stripC2pa,
+    before.categories.c2pa.details?.join('; ')
+  );
+
+  // 9. AI Prompts & Parameters
+  evaluateCategory(
+    'ai_prompts',
+    'AI Generation Prompts & Parameters',
+    before.hasAiIndicators,
+    after.hasAiIndicators,
+    options.stripAiPrompts,
+    before.categories.aiIndicators.toolIdentified || before.categories.aiIndicators.promptFound
+  );
+
+  // Not verifiable limitations
+  notVerifiable.push('Platform-side AI labels (applied by social networks during upload)');
+  notVerifiable.push('Invisible latent model watermarks (e.g. Google SynthID pixel embeddings)');
+
+  const hasRetained = categoriesRetained.length > 0;
+  const hasRemoved = categoriesRemoved.length > 0;
+  const overallStatus = inspectionFailed
+    ? 'unverified'
+    : hasRetained
+    ? 'partially_clean'
+    : hasRemoved
+    ? 'verified_clean'
+    : 'verified_clean';
+
+  return {
+    overallStatus,
+    categories,
+    categoriesRemoved,
+    categoriesRetained,
+    notPresent,
+    notVerifiable,
+    disclaimer:
+      'Supported metadata was processed and the output was independently verified for the listed categories. This does not establish whether the image is AI-generated, nor does it guarantee against third-party platform labeling or invisible latent watermarks.',
+    aiRemovalNotice: before.hasAiIndicators
+      ? 'Embedded generation prompts and metadata headers were stripped. Visual structure is preserved.'
+      : undefined,
+    c2paNotice: before.hasC2pa ? 'C2PA manifest boxes removed from file container.' : undefined,
   };
 }

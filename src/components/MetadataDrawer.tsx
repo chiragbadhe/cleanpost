@@ -5,7 +5,6 @@ import {
   X,
   MapPin,
   Camera,
-  Clock,
   Code,
   Sparkles,
   ShieldAlert,
@@ -13,16 +12,28 @@ import {
   Search,
   ExternalLink,
   Layers,
-  ArrowRight,
   Info,
+  CheckCircle2,
+  AlertTriangle,
+  MinusCircle,
+  HelpCircle,
 } from 'lucide-react';
-import { FileMetadataSummary } from '@/types/metadata';
+import { FileMetadataSummary, CleaningReport, CategoryCleaningStatus } from '@/types/metadata';
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
+}
 
 interface MetadataDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   metadata: FileMetadataSummary | null;
   afterMetadata?: FileMetadataSummary | null;
+  report?: CleaningReport | null;
 }
 
 export function MetadataDrawer({
@@ -30,6 +41,7 @@ export function MetadataDrawer({
   onClose,
   metadata,
   afterMetadata,
+  report,
 }: MetadataDrawerProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'gps' | 'device' | 'ai' | 'comparison' | 'raw'>('overview');
   const [searchQuery, setSearchQuery] = useState('');
@@ -41,6 +53,41 @@ export function MetadataDrawer({
     high: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20',
     medium: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20',
     low: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20',
+  };
+
+  const statusBadge = (status: CategoryCleaningStatus) => {
+    switch (status) {
+      case 'removed':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+            <CheckCircle2 className="w-3 h-3" /> VERIFIED REMOVED
+          </span>
+        );
+      case 'retained':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+            <AlertTriangle className="w-3 h-3" /> RETAINED
+          </span>
+        );
+      case 'not_present':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-zinc-200 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400">
+            <MinusCircle className="w-3 h-3" /> NOT PRESENT
+          </span>
+        );
+      case 'not_verified':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30">
+            <HelpCircle className="w-3 h-3" /> NOT VERIFIED
+          </span>
+        );
+      case 'unsupported':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-zinc-200 dark:bg-zinc-800 text-zinc-500">
+            UNSUPPORTED
+          </span>
+        );
+    }
   };
 
   const rawEntries = Object.entries(metadata.rawTags || {}).filter(([key, val]) => {
@@ -175,7 +222,7 @@ export function MetadataDrawer({
               }`}
             >
               <Layers className="w-3.5 h-3.5" />
-              Before & After
+              Audit Report
             </button>
           )}
 
@@ -467,35 +514,81 @@ export function MetadataDrawer({
             </div>
           )}
 
-          {/* TAB 5: BEFORE & AFTER COMPARISON */}
+          {/* TAB 5: BEFORE & AFTER AUDIT REPORT */}
           {activeTab === 'comparison' && afterMetadata && (
-            <div className="space-y-4 text-xs">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 rounded-xl border border-rose-500/30 bg-rose-500/5 space-y-2">
-                  <div className="font-semibold text-rose-600 dark:text-rose-400 uppercase text-[10px] tracking-wider">
-                    Before Cleaning
-                  </div>
-                  <div className="space-y-1 text-zinc-700 dark:text-zinc-300">
-                    <div>GPS: {metadata.hasGps ? 'Latitude & Longitude' : 'None'}</div>
-                    <div>Camera: {metadata.categories.device.make || 'None'}</div>
-                    <div>Timestamps: {metadata.hasTimestamps ? 'Embedded' : 'None'}</div>
-                    <div>AI Markers: {metadata.hasAiIndicators ? 'Present' : 'None'}</div>
-                    <div>Raw Tags: {metadata.rawTagCount}</div>
-                  </div>
+            <div className="space-y-5 text-xs">
+              {/* Category-by-Category Truthful Audit Table */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-semibold text-zinc-800 dark:text-zinc-200 uppercase text-[11px] tracking-wider">
+                    Category Verification Report
+                  </h4>
+                  {report?.overallStatus && (
+                    <span className="font-mono text-[10px] uppercase text-zinc-500">
+                      Overall: {report.overallStatus.replace('_', ' ')}
+                    </span>
+                  )}
                 </div>
 
-                <div className="p-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 space-y-2">
-                  <div className="font-semibold text-emerald-600 dark:text-emerald-400 uppercase text-[10px] tracking-wider">
-                    After Cleaning
-                  </div>
-                  <div className="space-y-1 text-zinc-700 dark:text-zinc-300">
-                    <div>GPS: <span className="text-emerald-500 font-semibold">Stripped</span></div>
-                    <div>Camera: <span className="text-emerald-500 font-semibold">Stripped</span></div>
-                    <div>Timestamps: <span className="text-emerald-500 font-semibold">Stripped</span></div>
-                    <div>AI Markers: <span className="text-emerald-500 font-semibold">Stripped</span></div>
-                    <div>Raw Tags: <span className="text-emerald-500 font-semibold">{afterMetadata.rawTagCount}</span></div>
-                  </div>
+                <div className="border border-zinc-200 dark:border-zinc-800 rounded-xl overflow-hidden divide-y divide-zinc-200 dark:divide-zinc-800/80 bg-zinc-50/30 dark:bg-zinc-900/30">
+                  {report?.categories ? (
+                    Object.values(report.categories).map((item) => (
+                      <div key={item.category} className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="space-y-0.5">
+                          <span className="font-medium text-zinc-900 dark:text-zinc-100 block">
+                            {item.label}
+                          </span>
+                          {item.details && (
+                            <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                              {item.details}
+                            </span>
+                          )}
+                        </div>
+                        <div className="shrink-0">
+                          {statusBadge(item.status)}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="p-4 text-zinc-500">No category report available.</div>
+                  )}
                 </div>
+              </div>
+
+              {/* File size reporting (reported separately from metadata removal) */}
+              <div className="p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/40 space-y-1">
+                <span className="font-semibold text-zinc-800 dark:text-zinc-200 block text-[11px] uppercase tracking-wider">
+                  File Size Comparison (Independent Metric)
+                </span>
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-zinc-500">Original Size:</span>
+                  <span className="font-mono">{metadata.fileSizeFormatted}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500">Cleaned Size:</span>
+                  <span className="font-mono">{afterMetadata.fileSizeFormatted}</span>
+                </div>
+                <div className="flex items-center justify-between text-emerald-600 dark:text-emerald-400 font-medium pt-1 border-t border-zinc-200 dark:border-zinc-800">
+                  <span>Delta:</span>
+                  <span className="font-mono">
+                    {formatBytes(Math.abs(metadata.fileSize - afterMetadata.fileSize))} (
+                    {metadata.fileSize > afterMetadata.fileSize ? 'reduction' : 'increase'})
+                  </span>
+                </div>
+                <p className="text-[10px] text-zinc-400 pt-1">
+                  * Note: File size changes reflect compression and container repacking; they do not serve as proof of metadata removal.
+                </p>
+              </div>
+
+              {/* Truthful Disclaimer */}
+              <div className="p-4 rounded-xl bg-zinc-100 dark:bg-zinc-900/80 border border-zinc-200 dark:border-zinc-800 space-y-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+                <div className="flex items-center gap-1.5 font-semibold text-zinc-800 dark:text-zinc-200">
+                  <Info className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                  Independent Verification Notice
+                </div>
+                <p className="leading-relaxed">
+                  Supported metadata was processed and the output was independently verified for the listed categories. This does not establish whether the image is AI-generated, nor does it guarantee against third-party platform labeling or invisible latent watermarks.
+                </p>
               </div>
             </div>
           )}

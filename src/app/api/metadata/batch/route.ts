@@ -7,6 +7,7 @@ import {
   detectFileType,
   MAX_FILE_SIZE_BYTES,
   sanitizeFilename,
+  sanitizeErrorMessage,
 } from '@/lib/security';
 import {
   CleaningOptionsSchema,
@@ -19,7 +20,16 @@ export async function POST(req: NextRequest) {
   let tempDir = '';
 
   try {
-    const formData = await req.formData();
+    let formData: FormData;
+    try {
+      formData = await req.formData();
+    } catch {
+      return NextResponse.json(
+        { error: 'Malformed multipart form data request.' },
+        { status: 400 }
+      );
+    }
+
     const files = formData.getAll('files') as File[];
     const optionsRaw = formData.get('options') as string | null;
 
@@ -45,21 +55,44 @@ export async function POST(req: NextRequest) {
     };
 
     if (optionsRaw) {
+      let parsedJson: unknown;
       try {
-        const parsed = JSON.parse(optionsRaw);
-        parsedOptions = CleaningOptionsSchema.parse(parsed);
-      } catch (e) {
-        console.warn('Batch options parse fallback:', e);
+        parsedJson = JSON.parse(optionsRaw);
+      } catch {
+        return NextResponse.json(
+          { error: 'Invalid JSON payload in "options" field.' },
+          { status: 400 }
+        );
       }
+
+      const validated = CleaningOptionsSchema.safeParse(parsedJson);
+      if (!validated.success) {
+        const issues = validated.error.issues
+          .map((i) => `${i.path.join('.') || 'root'}: ${i.message}`)
+          .join('; ');
+        return NextResponse.json(
+          { error: `Invalid cleaning options: ${issues}` },
+          { status: 400 }
+        );
+      }
+      parsedOptions = validated.data;
     }
 
     tempDir = await createTempDir();
     const results: CleanedFileResult[] = [];
     const errors: { fileName: string; error: string }[] = [];
 
-    // Process files sequentially to maintain predictable resource usage
+    // Process files sequentially to maintain predictable resource and memory usage
     for (const file of files) {
       const fileName = file.name || 'unnamed_file';
+      if (file.size === 0) {
+        errors.push({
+          fileName,
+          error: 'File is empty (0 bytes).',
+        });
+        continue;
+      }
+
       if (file.size > MAX_FILE_SIZE_BYTES) {
         errors.push({
           fileName,
@@ -77,7 +110,7 @@ export async function POST(req: NextRequest) {
         if (!typeInfo.valid) {
           errors.push({
             fileName,
-            error: typeInfo.error || 'Unsupported media file type',
+            error: typeInfo.error || 'Invalid media file format signature',
           });
           continue;
         }
@@ -97,7 +130,7 @@ export async function POST(req: NextRequest) {
         console.error(`Error processing batch file ${fileName}:`, err);
         errors.push({
           fileName,
-          error: (err as Error)?.message || 'Processing failed',
+          error: sanitizeErrorMessage(err, 'Processing failed'),
         });
       }
     }
@@ -112,7 +145,7 @@ export async function POST(req: NextRequest) {
   } catch (error: unknown) {
     console.error('Batch route error:', error);
     return NextResponse.json(
-      { error: (error as Error)?.message || 'Batch cleaning failure.' },
+      { error: sanitizeErrorMessage(error, 'Batch cleaning failure.') },
       { status: 500 }
     );
   } finally {

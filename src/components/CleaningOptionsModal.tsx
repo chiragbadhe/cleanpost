@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { X, Check, Sliders, Shield, RefreshCw, Zap } from 'lucide-react';
+import { X, Sliders, Shield, RefreshCw, Zap } from 'lucide-react';
 import { CleaningOptions } from '@/types/metadata';
 
 interface CleaningOptionsModalProps {

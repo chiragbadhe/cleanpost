@@ -31,14 +31,24 @@ When you snap a photo with an iPhone, edit a video in Premiere, or generate artw
 - **Orientation Preservation:** Automatically rotates photos based on EXIF before stripping orientation tags.
 - **Video Cleaning:** Lossless container stream-copying (`-map 0 -c copy -map_metadata -1`) or visually lossless re-encoding (`H.264/AAC` or `VP9/Opus`).
 
-### 3. Ephemeral Batch Processing & ZIP Export
-- Dedicated, streamlined clean workspace set as the default route (`/`).
+### 3. Smart Image Compression & Optimization
+- **First-Class Image Compressor (`/compress`):** Reduces file sizes while maintaining high visual quality.
+- **Configurable Quality & Presets:** Quality slider (1-100) with quick presets: *Low Size* (Q55), *Balanced* (Q80), and *High Quality* (Q92).
+- **Format Conversion:** Preserve original format, or convert between JPEG, WebP, and PNG.
+- **Transparency Safety:** Converts transparent PNG/WebP images to JPEG by flattening against clean white backgrounds so alpha channels never turn black.
+- **Adaptive Target File Size:** Iteratively searches for optimal quality to meet a maximum target file size budget in KB or MB.
+- **Non-Destructive Resizing:** Max width/height constraints with aspect-ratio preservation and anti-upscaling protection.
+- **Privacy Engine Integration:** Option to strip or preserve EXIF, GPS, and camera metadata during compression.
+- **Before & After Visual Comparison:** Interactive draggable split-slider and side-by-side comparison modal with exact byte and percentage savings metrics.
+
+### 4. Ephemeral Batch Processing & ZIP Export
+- Dedicated, streamlined clean workspace set as the default route (`/`) and Image Compressor at (`/compress`).
 - Drag-and-drop batch upload supporting **JPG, PNG, WebP, HEIC, MP4, MOV, and WebM**.
-- Process individually or batch clean the entire queue.
-- One-click **ZIP Archive export** (`cleanpost_batch_*.zip`).
+- Process individually or batch clean and compress the entire queue.
+- One-click **ZIP Archive export** (`cleanpost_batch_*.zip`, `cleanpost_compressed_*.zip`).
 - Ephemeral download links that auto-purge after 15 minutes.
 
-### 4. Honest Privacy & AI Disclosures
+### 5. Honest Privacy & AI Disclosures
 - Complete transparency: distinguishes between metadata headers (which CleanPost strips 100%) and latent pixel watermarks / server-side platform labels (which cannot be stripped by any metadata tool).
 
 ---
@@ -118,6 +128,16 @@ Cleans uploaded media according to specified options.
 Cleans multiple media files in a batch queue.
 - **Body:** `FormData` with `files` (Binary array) and optional `options` (JSON string)
 - **Response:** JSON with `BatchProcessingResponse`
+
+### `POST /api/compress`
+Compresses a single image file with adaptive quality, format conversion, and optional metadata stripping.
+- **Body:** `FormData` with `file` (Binary) and optional `options` (JSON string)
+- **Response:** JSON with `CompressedFileResult` and ephemeral `downloadUrl`
+
+### `POST /api/compress/batch`
+Compresses multiple images in a batch queue with partial error tolerance.
+- **Body:** `FormData` with `files` (Binary array) and optional `options` (JSON string)
+- **Response:** JSON with `BatchCompressionResponse`
 
 ### `POST /api/download/zip`
 Bundles completed cleaned files into a ZIP archive.

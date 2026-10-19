@@ -22,11 +22,13 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
-    const saved = localStorage.getItem('cleanpost-theme') as Theme | null;
-    if (saved && ['dark', 'light', 'system'].includes(saved)) {
-      setTheme(saved);
-    }
+    queueMicrotask(() => {
+      setMounted(true);
+      const saved = localStorage.getItem('cleanpost-theme') as Theme | null;
+      if (saved && ['dark', 'light', 'system'].includes(saved)) {
+        setTheme(saved);
+      }
+    });
   }, []);
 
   useEffect(() => {

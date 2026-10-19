@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShieldCheck, Lock, Cpu, Heart } from 'lucide-react';
+import { ShieldCheck, Lock, Cpu } from 'lucide-react';
 
 export function Footer() {
   return (

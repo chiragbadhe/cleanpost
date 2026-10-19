@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getCleanedFileEphemeral } from '@/lib/security';
+import { getCleanedFileEphemeral, isValidFileId } from '@/lib/security';
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
@@ -7,6 +7,13 @@ export async function GET(req: NextRequest) {
 
   if (!id) {
     return NextResponse.json({ error: 'Missing file id parameter.' }, { status: 400 });
+  }
+
+  if (!isValidFileId(id)) {
+    return NextResponse.json(
+      { error: 'Invalid file ID format. Must be a valid UUID.' },
+      { status: 400 }
+    );
   }
 
   const stored = getCleanedFileEphemeral(id);
@@ -17,7 +24,6 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Convert Buffer to Uint8Array for Response body
   const uint8 = new Uint8Array(stored.buffer);
 
   return new Response(uint8, {

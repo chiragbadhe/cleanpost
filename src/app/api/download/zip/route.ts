@@ -1,21 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server';
 import JSZip from 'jszip';
-import { getCleanedFileEphemeral } from '@/lib/security';
+import { getCleanedFileEphemeral, isValidFileId, sanitizeErrorMessage } from '@/lib/security';
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { fileIds } = body as { fileIds: string[] };
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'Malformed JSON payload.' }, { status: 400 });
+    }
+
+    const { fileIds } = (body || {}) as { fileIds?: unknown };
 
     if (!Array.isArray(fileIds) || fileIds.length === 0) {
       return NextResponse.json({ error: 'Please provide a non-empty array of fileIds.' }, { status: 400 });
+    }
+
+    // Validate each file ID
+    for (const id of fileIds) {
+      if (!isValidFileId(id)) {
+        return NextResponse.json(
+          { error: `Invalid file ID format in request: ${String(id).slice(0, 40)}` },
+          { status: 400 }
+        );
+      }
     }
 
     const zip = new JSZip();
     let filesAdded = 0;
 
     for (const id of fileIds) {
-      const stored = getCleanedFileEphemeral(id);
+      const stored = getCleanedFileEphemeral(id as string);
       if (stored) {
         zip.file(stored.fileName, stored.buffer);
         filesAdded++;
@@ -51,7 +67,7 @@ export async function POST(req: NextRequest) {
   } catch (err: unknown) {
     console.error('ZIP packaging error:', err);
     return NextResponse.json(
-      { error: (err as Error)?.message || 'Failed to generate ZIP archive.' },
+      { error: sanitizeErrorMessage(err, 'Failed to generate ZIP archive.') },
       { status: 500 }
     );
   }
